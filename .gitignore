@@ -1,2 +1,4 @@
 .vscode
 my-cv/
+src/clustering/cover*
+nfl_coaches_film/
