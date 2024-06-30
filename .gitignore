@@ -3,3 +3,4 @@ my-cv/
 src/clustering/cover*
 nfl_coaches_film/
 models/*
+src/nfl/output_video*
