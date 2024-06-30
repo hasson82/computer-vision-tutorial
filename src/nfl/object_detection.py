@@ -2,6 +2,8 @@ import cv2
 import numpy as np
 import matplotlib.pyplot as plt
 import glob
+import queue
+import threading
 
 confidence_threshold = 0.5
 with open("..\\..\\models\\coco.names", "r") as f:
@@ -11,6 +13,23 @@ path_prefix = "..\\..\\models"
 model_cfg = f"{path_prefix}\\yolov3-608.cfg"
 model_weights = f"{path_prefix}\\yolov3-608.weights"
 net = cv2.dnn.readNetFromDarknet(model_cfg, model_weights)
+
+# Define the writer thread function
+def write_frames(video_writer, id):
+    i = 0
+    while True:
+        i += 1
+        frame = frames[id].get()
+        if frame is None:  # None is used as a signal to stop the thread
+            print("Got none")
+            break
+        print(f"frame {i}")
+        video_writer.write(frame)
+    video_writer.release()
+
+frames = []
+frame_queue = queue.Queue(maxsize=100)
+frames.append(frame_queue)
 
 def get_output_layers(net):
     layer_names = net.getLayerNames()
@@ -65,10 +84,20 @@ def image_analysis():
 def video_analysis():
     print("Video Analysis - NFL Defenses")
     video = cv2.VideoCapture("nfl_coaches_film/browns_49ers_offense_1_drive.webm")
-    fps = video.get(cv2.CAP_PROP_FPS)
+    fps = video.get(cv2.CAP_PROP_FPS)/2
+    frame_width = int(video.get(3))
+    frame_height = int(video.get(4))
     print(fps)
-    delay = int(600/fps)
+    delay = int(1000/fps)
     last_frame_hist = None
+    i = 0
+    out = cv2.VideoWriter(f'output_video{i}.webm', cv2.VideoWriter_fourcc(*'VP90'), fps, (frame_width, frame_height))
+    threads = []
+    writer_thread = threading.Thread(target=write_frames, args=(out,i,))
+    threads.append(writer_thread)
+    writer_thread.start()
+    send_frame = True
+    frame_number = 0
     while True:
         ret, frame = video.read()
         # If an image frame has been grabbed, display it
@@ -80,9 +109,27 @@ def video_analysis():
             cur_frame_hist = cv2.calcHist([gray], [0], None, [256], [0, 256])  
             if last_frame_hist is not None:    
                 cmp = cv2.compareHist(last_frame_hist, cur_frame_hist, cv2.HISTCMP_CORREL)  
-                if cmp < 0.9:
-                    print("Change detected")
+                if cmp > 0.9:
+                    # if frame_number % 10 == 0:
+                    frames[i].put(frame, block=True)
+                else:
+                    print("Reached new play")
+                    print(f"Put None in queue {i}")
+                    frames[i].put(None)
+                    i += 1
+                    if i >= 15:
+                        print(f"created {i} threads")
+                        break
+                    out = cv2.VideoWriter(f'output_video{i}.webm', cv2.VideoWriter_fourcc(*'VP90'), fps, (frame_width, frame_height))
+                    frame_queue = queue.Queue(maxsize=100)
+                    frames.append(frame_queue)
+                    writer_thread = threading.Thread(target=write_frames, args=(out,i,))
+                    threads.append(writer_thread)
+                    writer_thread.start()
+                    frames[i].put(frame, block=True)
+
             last_frame_hist = cur_frame_hist
+            frame_number += 1
             # print(f"last frame hist: {last_frame_hist}")
             # print(f"cur frame hist: {cur_frame_hist}")
             cv2.waitKey(delay)
@@ -102,7 +149,16 @@ def video_analysis():
         # if cv2.waitKey(delay) & 0xFF == ord("s"):
         #     print("stopped video")
         #     cv2.waitKey()
+    
+    # Signal the writer thread to finish and wait for it
+    frames[-1].put(None)
+    print("Put None in queue")
+    for thread in threads:
+        thread.join()
+    print("All threads have completed")
+
     video.release()
+    out.release()
     cv2.destroyAllWindows()
 
 def main():
